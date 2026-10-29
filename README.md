@@ -237,7 +237,11 @@ re-translating anything.
 
 ---
 
-## Legal
+## License
+
+[MIT](LICENSE) © 2026 Luchs0-0
+
+## Legal note
 
 The pipeline is tooling; the **books are not included**. Translated editions of a copyrighted work
 are derivative works — check the source licence and your local rules before publishing outputs.

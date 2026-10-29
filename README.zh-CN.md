@@ -215,7 +215,11 @@ python tools/build_pdf.py \
 
 ---
 
-## 版权
+## 许可
+
+[MIT](LICENSE) © 2026 Luchs0-0
+
+## 版权说明
 
 本仓库只含**工具**，不含书籍本体。对受版权保护作品做翻译并发布属于演绎作品，
 请先确认来源许可与当地法规。原始 PDF 请勿入库（`workspace/source/` 已 gitignore）。
