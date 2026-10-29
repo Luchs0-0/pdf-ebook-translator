@@ -39,7 +39,8 @@ def main():
             b["translatable"] = False
 
     cache = json.load(io.open(args.cache, encoding="utf-8"))
-    missing = [b for b in blocks if b["translatable"] and T.key_of(b["text"]) not in cache]
+    missing = [b for b in blocks
+               if b["translatable"] and T.cache_lookup(cache, b["text"]) is None]
 
     print("缺失块数:", len(missing))
     for b in missing:

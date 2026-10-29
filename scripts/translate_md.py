@@ -269,8 +269,43 @@ def parse_json_array(raw):
 # ---------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------
+def clean_latex(text):
+    """把 MinerU standard 档产生的度数公式转成普通字符。
+    $-20^{\\circ}\\mathrm{C}$ -> -20°C ；$90^{\\circ}$ -> 90°
+    """
+    text = re.sub(r"\$(-?[\d.]+)\^\{?\\circ\}?\s*\\mathrm\{C\}\$", r"\1°C", text)
+    text = re.sub(r"\$(-?[\d.]+)\^\{?\\circ\}?\$", r"\1°", text)
+    return text
+
+
 def key_of(text):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+BULLET_PREFIX = re.compile(r"^[\s•▶▪◦○●\-\*]+")
+
+
+def strip_markers(text):
+    """去掉行首项目符号/序号，仅用于缓存查找（不改变输出）。"""
+    t = BULLET_PREFIX.sub("", text)
+    t = re.sub(r"^\d+[.)]\s*", "", t)
+    return t.strip()
+
+
+def cache_candidates(text):
+    """缓存键候选：原文键 + 去符号键（便于 flash/standard 两档复用同一缓存）。"""
+    keys = [key_of(text)]
+    alt = strip_markers(text)
+    if alt and alt != text:
+        keys.append(key_of(alt))
+    return keys
+
+
+def cache_lookup(cache, text):
+    for k in cache_candidates(text):
+        if k in cache:
+            return cache[k]
+    return None
 
 
 def main():
@@ -341,7 +376,7 @@ def main():
 
     for start in range(0, len(targets), args.batch):
         group = targets[start:start + args.batch]
-        todo = [b for b in group if key_of(b["text"]) not in cache]
+        todo = [b for b in group if cache_lookup(cache, b["text"]) is None]
 
         if not todo:
             done += len(group)
@@ -384,7 +419,9 @@ def main():
     out_lines = []
     replaced = 0
     for b in blocks:
-        zh = cache.get(key_of(b["text"])) if b["translatable"] else None
+        zh = cache_lookup(cache, b["text"]) if b["translatable"] else None
+        if zh:
+            zh = clean_latex(zh)
         if zh and b["kind"] == "code":
             # 保留围栏结构，只替换内部内容
             f = b.get("fence", "```")

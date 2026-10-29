@@ -191,7 +191,31 @@ $pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
 | **翻译脚本** | ✅ 已写好并跑通全本 |
 | **整本翻译** | ✅ **已完成**：3367 块全部替换、**0 失败**、中文占比 **87.5%**（88,300 字） |
 | **文本版 EPUB** | ✅ 已生成：`out\alpine-skills-summer-zh.epub`（259 KB / 89 章） |
-| **带图版** | 🔄 standard 档整本解析中（导出真实图片） |
+| **带图版** | ✅ **已生成**：`out\alpine-skills-summer-zh-illustrated.epub`（**27.34 MB / 688 图 / 785 条目**） |
+
+### 产物清单（`out\`，已 gitignore）
+
+| 文件 | 说明 |
+|---|---|
+| `book_std_zh.md` | 最终中文稿（带图片引用，88.3% 中文占比） |
+| `alpine-skills-summer-zh-illustrated.epub` | **带图版 EPUB（交付用）** |
+| `alpine-skills-summer-zh.epub` | 纯文本版（体积小，便于快速阅读） |
+| `book_std\markdown.md` + `book_std\images\` | standard 档解析原始产物（709 张图） |
+| `book_cache.json` | 翻译缓存（3,632 条，可续跑） |
+
+**重新生成链**：
+```powershell
+# 1) 解析（带图，约 12 分钟）
+& .venv-mineru\Scripts\mineru-kit.exe parse "<PDF>" -o out\book_std.zip --tier standard --format zip --pages all
+# 解压到 out\book_std\
+# 2) 翻译（命中缓存则几分钟）
+& .venv\Scripts\python.exe scripts\translate_md.py --md out\book_std\markdown.md --out out\book_std_zh.md --cache out\book_cache.json
+# 3) 出 EPUB（--resource-path 指向图片目录）
+& "$env:LOCALAPPDATA\Pandoc\pandoc.exe" out\book_std_zh.md -f markdown -o out\alpine-skills-summer-zh-illustrated.epub `
+    --toc --resource-path="out\book_std" --metadata title="高山技能手册（夏季）" --metadata lang=zh-CN
+```
+
+> 说明：插图本身是原书的英文图（等压线数值、图内标注等），本次只翻译正文与图注，不重绘图片。
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
 
 **已定决策**：
