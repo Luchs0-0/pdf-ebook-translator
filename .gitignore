@@ -32,3 +32,6 @@ secrets/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# ---- Archify local diagram workspace ----
+.archify/

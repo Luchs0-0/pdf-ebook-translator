@@ -36,6 +36,18 @@ EPUB（含插图）                 PDF（A4，含中文字体）
 
 ---
 
+## 结构图
+
+[![结构：源 PDF → probe → MinerU → parse → translate → EPUB / PDF](docs/repo-structure.png)](docs/repo-structure.html)
+
+同一张图也有可交互版本 —— **[docs/repo-structure.html](docs/repo-structure.html)**
+（可平移缩放、追路径、搜索、深浅色切换、导出 PNG/SVG）。请下载后用浏览器打开；
+GitHub 对 HTML 文件是显示源码而不是渲染。
+
+图里有三件事是下面的目录树表达不了的：`workspace/` 下都是运行期产物、不入库；
+`books/<book>/glossary` 是喂给翻译器的唯一真源；诊断类工具（`probe_pdf`、`ocr_probe`、`check_*`）
+只在真正起关卡作用的位置出现在主链上。
+
 ## 目录结构
 
 ```

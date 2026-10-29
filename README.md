@@ -37,6 +37,19 @@ See [`docs/pipeline.md`](docs/pipeline.md).
 
 ---
 
+## Structure
+
+[![Repository structure: source PDF → probe → MinerU → parse → translate → EPUB / PDF](docs/repo-structure.png)](docs/repo-structure.html)
+
+The same diagram is also an interactive page — **[docs/repo-structure.html](docs/repo-structure.html)**
+(pan, zoom, route tracing, search, dark/light, PNG/SVG export). Download it and open locally;
+GitHub shows HTML files as source rather than rendering them.
+
+Three things the picture encodes that the tree below cannot: `workspace/` nodes are runtime-only
+and never committed; `books/<book>/glossary` is the single source of truth feeding the translator;
+and the diagnostic tools (`probe_pdf`, `ocr_probe`, `check_*`) sit on the main path only where
+they genuinely gate it.
+
 ## Repository layout
 
 ```
