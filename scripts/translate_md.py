@@ -38,7 +38,7 @@ try:
 except ImportError:
     sys.exit("缺少依赖：pip install requests")
 
-DEFAULT_BASE = os.environ.get("HUNYUAN_BASE_URL", "https://api.hunyuan.cloud.tencent.com/v1")
+DEFAULT_BASE = os.environ.get("HUNYUAN_BASE_URL", "https://tokenhub-intl.tencentmaas.com/v1")
 DEFAULT_MODEL = os.environ.get("HUNYUAN_MODEL", "hy-mt2-plus")
 
 SYSTEM_TEMPLATE = """你是专业的英译中技术翻译，正在翻译一本登山技术手册（UIAA Alpine Skills）。
@@ -152,14 +152,18 @@ def split_blocks(md_text):
             i += 1
             continue
 
-        # 代码块：整体跳过
+        # 围栏块：这本书里 MinerU 用 fence 装"表格/图示文字"（没有真代码），
+        # 若内含足够英文，则翻译其内部内容并保留围栏结构。
         if CODE_FENCE.match(line):
             fence = line.strip()[:3]
             j = i + 1
             while j < n and not lines[j].strip().startswith(fence):
                 j += 1
+            inner = "\n".join(lines[i + 1:j])
+            prose = len(re.findall(r"[A-Za-z]{2,}", inner)) >= 6
             blocks.append({"kind": "code", "start": i, "end": min(j + 1, n),
-                           "text": "\n".join(lines[i:min(j + 1, n)]), "translatable": False})
+                           "text": inner if prose else "\n".join(lines[i:min(j + 1, n)]),
+                           "fence": fence, "translatable": prose})
             i = min(j + 1, n)
             continue
 
@@ -203,6 +207,13 @@ def split_blocks(md_text):
                        "text": para, "translatable": has_letters(para)})
         i = j
 
+    return blocks
+
+
+def attach_raw(blocks, lines):
+    """给每个块附上原文（行区间精确切片），供未翻译时原样回填。"""
+    for b in blocks:
+        b.setdefault("raw", "\n".join(lines[b["start"]:b["end"]]))
     return blocks
 
 
@@ -280,11 +291,18 @@ def main():
     with open(args.md, encoding="utf-8") as f:
         md = f.read()
 
-    blocks = split_blocks(md)
+    blocks = attach_raw(split_blocks(md), md.splitlines())
     # 过滤 OCR 噪声块（保留原文，不送翻译）
     skipped = 0
     for b in blocks:
-        if b["translatable"] and looks_like_garbage(b["text"]):
+        if not b["translatable"]:
+            continue
+        # 单个"像词但不是词"的短 token（如页脚残留 "Ouan"）→ 视为噪声
+        if (b["kind"] == "para" and re.fullmatch(r"[A-Z][a-z]{2,6}", b["text"].strip())):
+            b["translatable"] = False
+            skipped += 1
+            continue
+        if looks_like_garbage(b["text"]):
             b["translatable"] = False
             skipped += 1
     targets = [b for b in blocks if b["translatable"]]
@@ -367,7 +385,12 @@ def main():
     replaced = 0
     for b in blocks:
         zh = cache.get(key_of(b["text"])) if b["translatable"] else None
-        if zh:
+        if zh and b["kind"] == "code":
+            # 保留围栏结构，只替换内部内容
+            f = b.get("fence", "```")
+            out_lines.append("%s\n%s\n%s" % (f, zh, f))
+            replaced += 1
+        elif zh:
             prefix = ""
             if b["kind"] == "heading":
                 m = re.match(r"^(\s{0,3}#{1,6}\s+)", b["text"])
@@ -378,7 +401,7 @@ def main():
             out_lines.append(prefix + zh if prefix and not zh.startswith(prefix) else zh)
             replaced += 1
         else:
-            out_lines.append(b["text"])
+            out_lines.append(b.get("raw", b["text"]))
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

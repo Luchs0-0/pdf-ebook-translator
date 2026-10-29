@@ -28,6 +28,9 @@ PRE = {
     "acute mountain sickness": "急性高山症",
     "rethreaded figure-eight": "回穿八字结",
     "false sense of security": "虚假安全感",
+    "setting the tone": "营造氛围",
+    "ground rules": "基本准则",
+    "eco-citizen": "生态公民",
     "situational awareness": "情境意识",
     "objective hazard": "客观危险",
     "subjective hazard": "主观危险",
@@ -119,6 +122,10 @@ PRE = {
 # POST：常见错译 -> 定译（长词在前，避免把正确译文再改坏）
 # ---------------------------------------------------------------
 POST = {
+    "设定基调": "营造氛围",
+    "定调子": "营造氛围",
+    "定调": "营造氛围",
+    "生态公民意识": "生态公民",
     "意大利半扣结": "意大利半扣",
     "芒特结": "意大利半扣",
     "蒙特尔结": "意大利半扣",

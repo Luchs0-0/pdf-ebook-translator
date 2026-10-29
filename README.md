@@ -188,7 +188,10 @@ $pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
 | **MinerU 版面解析** | ✅ **已验证**（flash 档，第 100 页双栏栏序正确；但 flash 不导出图片） |
 | **整本解析** | ✅ **已完成**：357/357 页、**373,226 字符**（均 1045/页）、629 个标题、684 个图片引用、0 近空页 |
 | **pandoc EPUB** | ✅ 已验证出包（结构正确，因 flash 无图故图片缺失） |
-| **翻译脚本** | ✅ 已写好（分块/术语注入/前后置字典/缓存续跑），**卡在 API key 无效** |
+| **翻译脚本** | ✅ 已写好并跑通全本 |
+| **整本翻译** | ✅ **已完成**：3367 块全部替换、**0 失败**、中文占比 **87.5%**（88,300 字） |
+| **文本版 EPUB** | ✅ 已生成：`out\alpine-skills-summer-zh.epub`（259 KB / 89 章） |
+| **带图版** | 🔄 standard 档整本解析中（导出真实图片） |
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
 
 **已定决策**：
@@ -272,19 +275,26 @@ ImportError: DLL load failed while importing utf1632
 首次运行慢属正常；后续会命中缓存。**该缓存是全局共享的**，
 新建 venv 不会触发重新下载。
 
-### 5. 翻译引擎配置（腾讯混元翻译模型 plus）
+**第 5 项 · 翻译引擎配置（腾讯 MaaS / 混元翻译）**
 
-已定用**腾讯混元翻译模型 plus**（替换原计划的硅基流动，其 key 已作废）。
-密钥走环境变量 / `.env`（`.gitignore` 已排除，**不要写进 README**）：
+> ⚠️ 注意：端点**不是**混元官网，而是腾讯 MaaS 平台（tokenhub-intl）。
 
 ```powershell
-$env:HUNYUAN_API_KEY  = "<你的腾讯云 API Key>"
-$env:HUNYUAN_BASE_URL = "https://api.hunyuan.cloud.tencent.com/v1"
-$env:HUNYUAN_MODEL    = "hy-mt2-plus"
+$env:HUNYUAN_API_KEY  = "<腾讯云 API Key>"
+$env:HUNYUAN_BASE_URL = "https://tokenhub-intl.tencentmaas.com/v1"   # 已在脚本里设为默认
+$env:HUNYUAN_MODEL    = "hy-mt2-plus"                                # 已在脚本里设为默认
 ```
 
+模型探测结论（实测）：
+
+| 模型 ID | 结果 |
+|---|---|
+| `hy-mt2-plus` | ✅ **可用**，翻译质量好，祈使句与术语都能守住 |
+| `hy4-preview` | ⚠️ 60 秒超时（疑似推理型，慢） |
+| `hunyuan-translation-plus` | ❌ 400，服务 ID 不存在 |
+| `hy-mt2` | ❌ 400，服务 ID 不存在 |
+
 - 混元提供 **OpenAI 兼容**的 `/v1/chat/completions`，可直接复用 A.O.Z 项目的调用写法
-- **模型 ID = `hy-mt2-plus`**（腾讯混元翻译模型 plus，以控制台实际开通为准）
 - 若改走腾讯云 **TMT（机器翻译）** 而非混元大模型，则用 SecretId/SecretKey 签名，
   不是上面这套 OpenAI 兼容参数
 
