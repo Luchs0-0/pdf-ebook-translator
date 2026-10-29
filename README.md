@@ -186,6 +186,7 @@ $pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
 | venv | ✅ 主 `.venv` + MinerU 专用 `.venv-mineru`（互不干扰） |
 | **OCR 抽检** | ✅ **已完成**（10 页，10/10 存在栏序问题，已实现栏感知排序） |
 | **MinerU 版面解析** | ✅ **已验证**（flash 档，第 100 页双栏栏序正确；但 flash 不导出图片） |
+| **整本解析** | ✅ **已完成**：357/357 页、**373,226 字符**（均 1045/页）、629 个标题、684 个图片引用、0 近空页 |
 | **pandoc EPUB** | ✅ 已验证出包（结构正确，因 flash 无图故图片缺失） |
 | **翻译脚本** | ✅ 已写好（分块/术语注入/前后置字典/缓存续跑），**卡在 API key 无效** |
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
@@ -209,7 +210,7 @@ $pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
 - [x] 写翻译脚本 `scripts/translate_md.py`
 - [ ] **拿到有效的混元 API key**（现有那把 401 无效）
 - [ ] 决定图片方案：启用 standard 档（需下 GB 级模型）或接受纯文本 EPUB
-- [ ] 整本 357 页 MinerU 解析
+- [x] 整本 357 页 MinerU 解析（`out\book.md`，373,226 字符，0 近空页）
 - [ ] 整本翻译 + 分批校对
 
 ---
