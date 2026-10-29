@@ -124,6 +124,18 @@ def has_letters(s):
     return bool(re.search(r"[A-Za-z]{2,}", s))
 
 
+def looks_like_garbage(text):
+    """识别 OCR 噪声（如封面 logo 被识别成 'Baig - alsng - aliic g - lc snm'）。
+
+    判据：英文单词几乎必含元音；若大量 token 无元音，多半是噪声。
+    """
+    tokens = re.findall(r"[A-Za-z]+", text)
+    if len(tokens) < 3:
+        return False
+    vowel_less = sum(1 for t in tokens if len(t) >= 2 and not re.search(r"[aeiouAEIOU]", t))
+    return (vowel_less / len(tokens)) > 0.30
+
+
 def split_blocks(md_text):
     """返回 blocks: [{'kind','start','end','text'}]（行索引，end 不含）。
 
@@ -269,8 +281,18 @@ def main():
         md = f.read()
 
     blocks = split_blocks(md)
+    # 过滤 OCR 噪声块（保留原文，不送翻译）
+    skipped = 0
+    for b in blocks:
+        if b["translatable"] and looks_like_garbage(b["text"]):
+            b["translatable"] = False
+            skipped += 1
     targets = [b for b in blocks if b["translatable"]]
-    print("总块数 %d，可翻译块 %d" % (len(blocks), len(targets)))
+    print("总块数 %d，可翻译块 %d（已过滤疑似 OCR 噪声 %d）"
+          % (len(blocks), len(targets), skipped))
+    if targets:
+        est = (len(targets) + args.batch - 1) // args.batch
+        print("按 --batch=%d 估算：约 %d 次请求" % (args.batch, est))
 
     if args.limit:
         targets = targets[:args.limit]
