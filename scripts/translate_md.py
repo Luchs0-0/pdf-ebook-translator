@@ -358,9 +358,6 @@ def main():
         return
 
     key = os.environ.get("HUNYUAN_API_KEY", "").strip()
-    if not key:
-        sys.exit("请先设置环境变量 HUNYUAN_API_KEY")
-
     glossary = load_glossary(args.glossary)
     print("术语表条数:", len(glossary))
 
@@ -369,6 +366,14 @@ def main():
 
     cache = json.load(open(args.cache, encoding="utf-8")) if os.path.exists(args.cache) else {}
     os.makedirs(os.path.dirname(os.path.abspath(args.cache)), exist_ok=True)
+
+    # 命中率统计；只有真的需要请求时才要求 API key
+    pending = [b for b in targets if cache_lookup(cache, b["text"]) is None]
+    hit = len(targets) - len(pending)
+    print("缓存命中 %d / %d（%.1f%%），待翻译 %d"
+          % (hit, len(targets), (hit / len(targets) * 100) if targets else 0, len(pending)))
+    if pending and not key:
+        sys.exit("还有 %d 块未翻译，请先设置环境变量 HUNYUAN_API_KEY" % len(pending))
 
     session = requests.Session()
     done = 0
@@ -421,7 +426,9 @@ def main():
     for b in blocks:
         zh = cache_lookup(cache, b["text"]) if b["translatable"] else None
         if zh:
-            zh = clean_latex(zh)
+            # 回填时再走一次后置字典 + LaTeX 清洗：
+            # 这样修正术语表后无需重翻，重新生成即可修好已有译文
+            zh = clean_latex(apply_dict(zh, post))
         if zh and b["kind"] == "code":
             # 保留围栏结构，只替换内部内容
             f = b.get("fence", "```")

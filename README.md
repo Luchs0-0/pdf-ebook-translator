@@ -197,22 +197,31 @@ $pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
 
 | 文件 | 说明 |
 |---|---|
-| `book_std_zh.md` | 最终中文稿（带图片引用，88.3% 中文占比） |
-| `alpine-skills-summer-zh-illustrated.epub` | **带图版 EPUB（交付用）** |
-| `alpine-skills-summer-zh.epub` | 纯文本版（体积小，便于快速阅读） |
+| `alpine-skills-summer-zh-illustrated.epub` | **带图版 EPUB（交付用）**，688 图 / 27.33 MB |
+| `alpine-skills-summer-zh.pdf` | **中文 PDF（交付用）**，401 页 / 30.63 MB / 中文占比 96.8% |
+| `alpine-skills-summer-zh.epub` | 纯文本版 EPUB（259 KB，体积小便于快速阅读） |
+| `book_std_zh.md` | 最终中文稿（带图片引用） |
 | `book_std\markdown.md` + `book_std\images\` | standard 档解析原始产物（709 张图） |
 | `book_cache.json` | 翻译缓存（3,632 条，可续跑） |
+
+**PDF 路线说明**：本机没有 LaTeX（xelatex）也没有 LibreOffice，
+所以 PDF 走 **Markdown → pandoc(HTML，图片 base64 内嵌) → Chrome headless 打印**。
+中文用系统"微软雅黑"，A4 版式，已关闭浏览器自带页眉页脚。
+脚本：`scripts/make_pdf.py`（自动探测 pandoc 与 Chrome/Edge）。
 
 **重新生成链**：
 ```powershell
 # 1) 解析（带图，约 12 分钟）
 & .venv-mineru\Scripts\mineru-kit.exe parse "<PDF>" -o out\book_std.zip --tier standard --format zip --pages all
 # 解压到 out\book_std\
-# 2) 翻译（命中缓存则几分钟）
+# 2) 翻译（命中缓存时无需 API key，几分钟）
 & .venv\Scripts\python.exe scripts\translate_md.py --md out\book_std\markdown.md --out out\book_std_zh.md --cache out\book_cache.json
-# 3) 出 EPUB（--resource-path 指向图片目录）
+# 3) EPUB
 & "$env:LOCALAPPDATA\Pandoc\pandoc.exe" out\book_std_zh.md -f markdown -o out\alpine-skills-summer-zh-illustrated.epub `
     --toc --resource-path="out\book_std" --metadata title="高山技能手册（夏季）" --metadata lang=zh-CN
+# 4) PDF
+& .venv\Scripts\python.exe scripts\make_pdf.py --md out\book_std_zh.md --out out\alpine-skills-summer-zh.pdf `
+    --resource-path out\book_std --title "高山技能手册（夏季）"
 ```
 
 > 说明：插图本身是原书的英文图（等压线数值、图内标注等），本次只翻译正文与图注，不重绘图片。
