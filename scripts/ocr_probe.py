@@ -28,18 +28,36 @@ import sys
 # ---------------------------------------------------------------
 def load_engine(name):
     if name == "paddle":
+        # Paddle 3.x 在 CPU 上的 oneDNN 有已知缺陷：
+        #   NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support
+        # 关掉 MKLDNN 即可绕过（速度略降，稳定性优先）
+        os.environ.setdefault("FLAGS_use_mkldnn", "0")
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         try:
             from paddleocr import PaddleOCR
-        except ImportError:
+        except ImportError as exc:
             sys.exit(
-                "缺少 paddleocr。安装：\n"
-                "    pip install paddleocr paddlepaddle\n"
-                "或改用轻量引擎：\n"
-                "    pip install rapidocr-onnxruntime\n"
-                "    python ocr_probe.py --dir <dir> --engine rapidocr"
+                "缺少 paddleocr / 导入失败：%s\n"
+                "安装：pip install paddleocr paddlepaddle\n"
+                "若报 chardet DLL 错误：pip install \"chardet==5.2.0\"\n"
+                "或改用轻量引擎：pip install rapidocr-onnxruntime\n"
+                "    python ocr_probe.py --dir <dir> --engine rapidocr" % exc
             )
-        ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
-        return ("paddle", ocr)
+        # paddleocr 3.x 改了构造参数名（show_log 移除、use_angle_cls -> use_textline_orientation）
+        for kwargs in (
+            {"use_textline_orientation": True, "lang": "en", "enable_mkldnn": False},
+            {"use_textline_orientation": True, "lang": "en"},
+            {"use_angle_cls": True, "lang": "en"},
+            {"lang": "en"},
+            {},
+        ):
+            try:
+                ocr = PaddleOCR(**kwargs)
+                print("PaddleOCR 初始化参数: %s" % (kwargs or "默认"))
+                return ("paddle", ocr)
+            except (TypeError, ValueError):
+                continue
+        sys.exit("PaddleOCR 初始化失败，请检查安装版本")
 
     if name == "rapidocr":
         try:
@@ -57,11 +75,18 @@ def run_ocr(engine, path):
     out = []
 
     if kind == "paddle":
-        # PaddleOCR 2.x / 3.x 接口差异兼容
-        try:
-            res = model.ocr(path, cls=True)
-        except TypeError:
-            res = model.ocr(path)
+        # paddleocr 2.x / 3.x 接口差异兼容
+        res = None
+        for call in (
+            lambda: model.predict(path),
+            lambda: model.ocr(path, cls=True),
+            lambda: model.ocr(path),
+        ):
+            try:
+                res = call()
+                break
+            except (TypeError, AttributeError):
+                continue
         if not res:
             return out
         # 3.x 可能返回 dict 列表；2.x 返回 [[box, (text, score)]]
@@ -103,12 +128,25 @@ def naive_order(blocks):
     return sorted(blocks, key=lambda b: (round(b["cy"] / 20), b["x0"]))
 
 
-def column_order(blocks, page_w, span_ratio=0.55):
-    """栏感知顺序：跨栏元素（标题/图）切分成横带，每带内先左栏后右栏。"""
+def is_span(b, page_w, span_ratio=0.70):
+    """真正的"跨栏"块：足够宽，且横跨页面中线。
+    只按宽度判断会把单栏的长行误判成跨栏（实测踩过这个坑）。"""
     mid = page_w / 2
-    spans, left, right = [], [], []
+    return b["w"] >= page_w * span_ratio and b["x0"] < mid < b["x1"]
+
+
+def column_order(blocks, page_w, page_h=None):
+    """栏感知顺序：跨栏元素切分成横带，每带内先左栏后右栏。
+    page_h 用于识别"页脚区"——页面底部的长行（如整行项目符号）虽然横跨中线，
+    但它是正文末尾而非跨栏标题，不能当横带分隔符（实测踩过这个坑）。"""
+    mid = page_w / 2
+    footer_line = page_h * 0.8 if page_h else None
+
+    spans, left, right, footer = [], [], [], []
     for b in blocks:
-        if b["w"] >= page_w * span_ratio:
+        if footer_line and b["y0"] > footer_line:
+            footer.append(b)
+        elif is_span(b, page_w):
             spans.append(b)
         elif b["cx"] < mid:
             left.append(b)
@@ -117,33 +155,33 @@ def column_order(blocks, page_w, span_ratio=0.55):
 
     spans.sort(key=lambda b: b["y0"])
     if not spans:
-        # 没有跨栏元素：整页当作一个带
-        return (sorted(left, key=lambda b: (b["y0"], b["x0"])) +
-                sorted(right, key=lambda b: (b["y0"], b["x0"])))
+        ordered = (sorted(left, key=lambda b: (b["y0"], b["x0"])) +
+                   sorted(right, key=lambda b: (b["y0"], b["x0"])))
+        return ordered + sorted(footer, key=lambda b: (b["y0"], b["x0"]))
 
-    bands = [{"top": s["y0"], "bottom": s["y1"], "span": s} for s in spans]
+    bands = [{"top": s["y0"], "span": s} for s in spans]
     banded = {i: {"left": [], "right": []} for i in range(len(bands))}
 
     for b in left + right:
         idx = 0
         for i, band in enumerate(bands):
-            if b["cy"] >= band["top"]:
+            if b["y0"] >= band["top"]:
                 idx = i
-        target = "left" if b["cx"] < mid else "right"
-        banded[idx][target].append(b)
+        banded[idx]["left" if b["cx"] < mid else "right"].append(b)
 
     ordered = []
     for i, band in enumerate(bands):
         ordered.append(band["span"])
         ordered += sorted(banded[i]["left"], key=lambda b: (b["y0"], b["x0"]))
         ordered += sorted(banded[i]["right"], key=lambda b: (b["y0"], b["x0"]))
-    return ordered
+    return ordered + sorted(footer, key=lambda b: (b["y0"], b["x0"]))
 
 
 def main():
     ap = argparse.ArgumentParser(description="OCR probe with column-order check")
     ap.add_argument("--dir", required=True, help="PNG 目录")
     ap.add_argument("--engine", default="paddle", choices=["paddle", "rapidocr"])
+    ap.add_argument("--only", default="", help='只处理这些页，例："p0020,p0100"（按文件名前缀匹配）')
     ap.add_argument("--dump", default="", help="把结果写成 JSON")
     args = ap.parse_args()
 
@@ -154,8 +192,11 @@ def main():
 
     engine = load_engine(args.engine)
     files = sorted(f for f in os.listdir(args.dir) if f.lower().endswith((".png", ".jpg", ".jpeg")))
+    if args.only:
+        wanted = [s.strip() for s in args.only.split(",") if s.strip()]
+        files = [f for f in files if any(f.startswith(w) for w in wanted)]
     if not files:
-        sys.exit(f"目录里没有图片: {args.dir}")
+        sys.exit(f"目录里没有匹配的图片: {args.dir}")
 
     report = []
     diff_pages = 0
@@ -163,15 +204,18 @@ def main():
     for fname in files:
         path = os.path.join(args.dir, fname)
         with Image.open(path) as im:
-            page_w = im.width
+            page_w, page_h = im.size
 
         raw = run_ocr(engine, path)
-        blocks = [{"x0": r[0], "y0": r[1], "x1": r[2], "y1": r[3], "text": r[4],
-                   "cx": (r[0] + r[2]) / 2, "cy": (r[1] + r[3]) / 2,
-                   "w": r[2] - r[0], "h": r[3] - r[1]} for r in raw]
+        blocks = [{"x0": float(r[0]), "y0": float(r[1]), "x1": float(r[2]), "y1": float(r[3]),
+                   "text": r[4],
+                   "cx": (float(r[0]) + float(r[2])) / 2,
+                   "cy": (float(r[1]) + float(r[3])) / 2,
+                   "w": float(r[2]) - float(r[0]),
+                   "h": float(r[3]) - float(r[1])} for r in raw]
 
         n = naive_order(blocks)
-        c = column_order(blocks, page_w)
+        c = column_order(blocks, page_w, page_h)
 
         # 顺序差异：能说明"朴素排序会交错左右栏"
         naive_seq = [b["text"] for b in n]
@@ -183,7 +227,7 @@ def main():
         print(f"\n=== {fname}  块数={len(blocks)}  顺序差异={'是' if differs else '否'} ===")
         print("--- 栏感知顺序（前 8 块）---")
         for b in c[:8]:
-            side = "跨栏" if b["w"] >= page_w * 0.55 else ("左" if b["cx"] < page_w / 2 else "右")
+            side = "跨栏" if is_span(b, page_w) else ("左" if b["cx"] < page_w / 2 else "右")
             print(f"  [{side}] y={b['y0']:>5.0f} x={b['x0']:>5.0f}  {b['text'][:60]}")
         if differs:
             print("--- 朴素顺序（前 8 块，注意是否左右交错）---")

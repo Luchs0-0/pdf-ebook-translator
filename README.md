@@ -81,17 +81,23 @@ $py = "C:\Users\zhoun\personal-project\aoz\mit-venv\Scripts\python.exe"
 & $py scripts\probe_pdf.py --pdf "C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf"
 ```
 
-### 步骤 1：OCR 抽检 + 栏序验证（**下一步，未做**）
-这是决定整本项目是否可行的关键闸门：
+### 步骤 1：OCR 抽检 + 栏序验证（✅ 已完成，见下方结论）
 ```powershell
 # 渲染 10 页样张
-& $py scripts\render_pages.py --pdf "<PDF路径>" --pages "6,20,60,100,140,200,240,280,320,350" --out out\png
+& $py scripts\render_pages.py --pages "6,20,60,100,140,200,240,280,320,350" --out out\png
 # 跑 OCR 并检查"先左栏后右栏"的阅读顺序
-& $py scripts\ocr_probe.py --dir out\png
+& $py scripts\ocr_probe.py --dir out\png --dump out\ocr_probe.json
 ```
-- 需要 `paddleocr` + `paddlepaddle`（未装，见脚本头部提示）
-- 判定标准：**双栏是否被正确分离、左右栏顺序是否对、段落是否被切碎**
-- 若栏序错乱 → 必须换版面感知工具（见 `docs/管线选型.md`），不要硬上
+
+**实测结论（10 页样本）**：
+- OCR 识别质量良好：每页 6-66 个文本块，英文印刷体基本全中
+- **10/10 页在"朴素顺序"（先上后下、再左后右）下左右栏严重交错**
+  典型例子（第 20 页）：`Limestone`（左栏 y=110）→ `Granite`（右栏 y=99）→ 又跳回左栏
+- 即：**必须**用栏感知排序或版面感知工具，不能靠 y 坐标排序
+- 已实现栏感知排序（跨栏判定 = 宽度≥70% 且横跨中线；页脚区 y>80% 单独处理），
+  在抽样页上能把左栏正文排成连续段落
+
+> 这说明路线 B（MinerU 版面解析）是必需项而非可选项。
 
 ### 步骤 2：版面解析 → Markdown（**路线 B 已选定**）
 用 **MinerU** 把扫描页解析成结构化 Markdown（含标题层级、段落、图注、表格）：
@@ -131,7 +137,7 @@ pandoc out\mineru\book.md -o out\alpine-skills-zh.epub --toc --metadata title="�
 | 字典生成脚本 | ✅ 可运行，顺序自检 0 风险 |
 | 脚本骨架 | ✅ 已就位（probe / render / ocr_probe / verify_dicts） |
 | git | ✅ 已 `git init`（分支 main），已首次 commit |
-| **OCR 抽检** | ❌ **未执行 —— 下一步** |
+| **OCR 抽检** | ✅ **已完成**（10 页，10/10 存在栏序问题，已实现栏感知排序） |
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
 
 **已定决策**：
@@ -142,10 +148,43 @@ pandoc out\mineru\book.md -o out\alpine-skills-zh.epub --toc --metadata title="�
 
 ### 已知待办
 
-- [ ] 跑 `scripts/ocr_probe.py` 完成 OCR + 双栏顺序抽检（paddleocr 安装中）
+- [x] 装 OCR 引擎（paddleocr 3.7.0 + paddlepaddle 3.3.1）并跑完 OCR 抽检
 - [ ] 装 MinerU（`magic-pdf[full]`），试解析第 100 页验证双栏合并
 - [ ] 装 pandoc
-- [ ] 配置远程仓库（gh 安装中，装完需 `gh auth login`）
+- [ ] 配置远程仓库（gh 2.103.3 已装，**尚未登录**：需 `gh auth login`）
+
+---
+
+## 五之二、环境坑位（本机实测）
+
+### 1. Paddle 3.x CPU 的 oneDNN 缺陷（必须关 MKLDNN）
+```
+NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute not support
+  [pir::ArrayAttribute<pir::DoubleAttribute>]
+```
+解法（脚本已内置）：
+```python
+os.environ["FLAGS_use_mkldnn"] = "0"
+PaddleOCR(..., enable_mkldnn=False)
+```
+
+### 2. chardet 7.7.0 的 DLL 报错
+```
+ImportError: DLL load failed while importing utf1632
+```
+解法：`pip install "chardet==5.2.0"`
+
+### 3. 装 paddle 把 numpy 降级了（2.5.4 → 2.3.5）
+本仓库借用了 `aoz/mit-venv`（共享环境）。装 paddleocr 时 numpy 被降到 2.3.5，
+cv2 也换成了 4.10.0。**已验证 A.O.Z 的 manga_translator 仍能正常启动**（help 输出正常），
+但这是**版本漂移风险**：
+
+> 若本项目再装更多依赖（MinerU 等），建议**在仓库内单独建 `.venv`**，
+> 不要再往 `aoz/mit-venv` 里装，以免两边互相破坏。`.gitignore` 已排除 `.venv/`。
+
+### 4. PaddleOCR 首次运行会下载模型
+模型落在 `C:\Users\zhoun\.paddlex\official_models\`（约 200 MB），
+首次运行慢属正常；后续会命中缓存。
 
 ---
 
