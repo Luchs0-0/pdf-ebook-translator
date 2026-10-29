@@ -1,8 +1,15 @@
-# Alpine Skills Summer —— 中文翻译工程
+# PDF 电子书翻译管线（pdf-ebook-translator）
 
-UIAA《Alpine Skills Summer》登山技术手册（357 页）的简体中文翻译项目。
+把**扫描版 PDF 电子书**翻成简体中文的可复用管线：
 
-本仓库是从 `../aoz/`（高达 A.O.Z 漫画汉化项目）**拆出来的独立工程**：
+```
+PDF 结构探针 → 版面感知解析 → LLM 分块翻译（术语表注入）→ EPUB 重排
+```
+
+**当前实例**：UIAA《Alpine Skills Summer》登山技术手册（357 页 / 双栏 / 纯扫描件）。
+管线本身与具体书目解耦，后续可挂其他书（每本书一套 glossary + source）。
+
+本仓库从 `../aoz/`（高达 A.O.Z 漫画汉化项目）拆出：
 复用其中的 LLM 翻译层与术语表机制，但**不复用**漫画的图像处理管线（原因见 `docs/管线选型.md`）。
 
 ---
@@ -26,7 +33,7 @@ UIAA《Alpine Skills Summer》登山技术手册（357 页）的简体中文翻�
 ## 二、项目结构
 
 ```
-alpine-skills-zh/
+pdf-ebook-translator/
 ├─ README.md                  ← 本文档
 ├─ .gitignore
 ├─ source/                    ← 放原始 PDF（不入库）
@@ -118,7 +125,7 @@ magic-pdf -p "<PDF路径>" -o out\mineru
 ### 步骤 4：合成 EPUB
 ```powershell
 # pandoc 由 md 生成 epub（需装 pandoc）
-pandoc out\mineru\book.md -o out\alpine-skills-zh.epub --toc --metadata title="高山技能（夏季）"
+pandoc out\mineru\book.md -o out\alpine-skills-summer-zh.epub --toc --metadata title="高山技能（夏季）"
 ```
 - 图片随 md 引用保留（MinerU 会把图切出来存 `images/`）
 - 生成后人工过一遍：目录层级、图注位置、代码/列表格式
@@ -136,7 +143,7 @@ pandoc out\mineru\book.md -o out\alpine-skills-zh.epub --toc --metadata title="�
 | 术语表初稿 | ✅ 已建（md 约 100 条；生成 pre-dict **91** / post-dict **32** / sakura **91** 行） |
 | 字典生成脚本 | ✅ 可运行，顺序自检 0 风险 |
 | 脚本骨架 | ✅ 已就位（probe / render / ocr_probe / verify_dicts） |
-| git | ✅ 已 `git init`（分支 main），已首次 commit |
+| venv | ✅ 已独立（`.venv`，不再借用 A.O.Z 环境） |
 | **OCR 抽检** | ✅ **已完成**（10 页，10/10 存在栏序问题，已实现栏感知排序） |
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
 
@@ -144,14 +151,18 @@ pandoc out\mineru\book.md -o out\alpine-skills-zh.epub --toc --metadata title="�
 - **翻译路线 = B（EPUB 重排）**：MinerU 解析 → Markdown → LLM 分块翻译 → pandoc 生成 EPUB。
   理由：技术手册的价值在内容可检索/可重排，原版彩色设计的还原成本不值。
 - **OCR 引擎 = PaddleOCR**：与 A.O.Z 漫画项目保持一致，精度已验证。
-- **仓库名 = `alpine-skills-zh`**：描述性命名，不直接顶书名、不与官方产生关联暗示。
+- **仓库名 = `pdf-ebook-translator`**：通用命名——这是**可复用的 PDF 电子书翻译管线**，
+  UIAA《Alpine Skills Summer》是第一个实例（后续可挂其他书，每本书一套 `glossary` + `source`）。
+- **翻译引擎 = 腾讯混元翻译模型 plus**（Hunyuan），替换原计划的硅基流动（key 已作废）。
 
 ### 已知待办
 
 - [x] 装 OCR 引擎（paddleocr 3.7.0 + paddlepaddle 3.3.1）并跑完 OCR 抽检
+- [x] 建独立 `.venv`
+- [x] gh 登录（账号 Luchs0-0）
+- [ ] 建远程仓库并推送
 - [ ] 装 MinerU（`magic-pdf[full]`），试解析第 100 页验证双栏合并
 - [ ] 装 pandoc
-- [ ] 配置远程仓库（gh 2.103.3 已装，**尚未登录**：需 `gh auth login`）
 
 ---
 
@@ -174,17 +185,40 @@ ImportError: DLL load failed while importing utf1632
 ```
 解法：`pip install "chardet==5.2.0"`
 
-### 3. 装 paddle 把 numpy 降级了（2.5.4 → 2.3.5）
-本仓库借用了 `aoz/mit-venv`（共享环境）。装 paddleocr 时 numpy 被降到 2.3.5，
-cv2 也换成了 4.10.0。**已验证 A.O.Z 的 manga_translator 仍能正常启动**（help 输出正常），
-但这是**版本漂移风险**：
+### 3. venv 已独立（原风险已消除）
+最初借用了 `aoz/mit-venv`，装 paddleocr 时 numpy 被降到 2.3.5、cv2 换成 4.10.0
+（已验证 A.O.Z 的 manga_translator 仍能启动，但属版本漂移）。
 
-> 若本项目再装更多依赖（MinerU 等），建议**在仓库内单独建 `.venv`**，
-> 不要再往 `aoz/mit-venv` 里装，以免两边互相破坏。`.gitignore` 已排除 `.venv/`。
+**现已为本项目建独立 `.venv`**，不再共享，两边互不影响：
+
+```powershell
+.venv\Scripts\python.exe -m pip list
+```
+- 基础解释器：dsh 捆绑 Python 3.12（与 A.O.Z 同源，便于对比行为）
+- 已装：pymupdf / pillow / paddleocr / paddlepaddle / chardet==5.2.0
+- `.gitignore` 已排除 `.venv/`
 
 ### 4. PaddleOCR 首次运行会下载模型
 模型落在 `C:\Users\zhoun\.paddlex\official_models\`（约 200 MB），
-首次运行慢属正常；后续会命中缓存。
+首次运行慢属正常；后续会命中缓存。**该缓存是全局共享的**，
+新建 venv 不会触发重新下载。
+
+### 5. 翻译引擎配置（腾讯混元翻译模型 plus）
+
+已定用**腾讯混元翻译模型 plus**（替换原计划的硅基流动，其 key 已作废）。
+密钥走环境变量 / `.env`（`.gitignore` 已排除，**不要写进 README**）：
+
+```powershell
+$env:HUNYUAN_API_KEY  = "<你的腾讯云 API Key>"
+$env:HUNYUAN_BASE_URL = "https://api.hunyuan.cloud.tencent.com/v1"
+$env:HUNYUAN_MODEL    = "hunyuan-translation-plus"
+```
+
+- 混元提供 **OpenAI 兼容**的 `/v1/chat/completions`，可直接复用 A.O.Z 项目的调用写法
+- **模型 ID 以腾讯云控制台实际开通的为准**：若控制台显示的不是 `-plus`
+  （亦有 `hunyuan-translation-lite` / `-pro`），改 `HUNYUAN_MODEL` 即可
+- 若改走腾讯云 **TMT（机器翻译）** 而非混元大模型，则用 SecretId/SecretKey 签名，
+  不是上面这套 OpenAI 兼容参数
 
 ---
 

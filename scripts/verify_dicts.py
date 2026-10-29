@@ -3,7 +3,7 @@
 import io
 import json
 
-BASE = r"C:\Users\zhoun\personal-project\alpine-skills-zh\glossary"
+BASE = r"C:\Users\zhoun\personal-project\pdf-ebook-translator\glossary"
 pre = json.load(io.open(BASE + r"\dict_pre.json", encoding="utf-8"))
 post = json.load(io.open(BASE + r"\dict_post.json", encoding="utf-8"))
 
