@@ -13,9 +13,11 @@ build/
 !docs/**/*.png
 !docs/**/*.jpg
 
-# ---- Python ----
+# ---- Python 虚拟环境（.venv / .venv-mineru / 任意 .venv-* 全部排除）----
 .venv/
+.venv*/
 venv/
+env/
 __pycache__/
 *.py[cod]
 *.egg-info/

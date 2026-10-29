@@ -106,29 +106,69 @@ $py = "C:\Users\zhoun\personal-project\aoz\mit-venv\Scripts\python.exe"
 
 > 这说明路线 B（MinerU 版面解析）是必需项而非可选项。
 
-### 步骤 2：版面解析 → Markdown（**路线 B 已选定**）
-用 **MinerU** 把扫描页解析成结构化 Markdown（含标题层级、段落、图注、表格）：
-```powershell
-# 待安装：pip install "magic-pdf[full]"
-& $py -c "import magic_pdf" # 装完先验
-magic-pdf -p "<PDF路径>" -o out\mineru
-```
-- 产出 `out\mineru\*.md`，是后续翻译的**唯一输入**（不再动原图）
-- 重点检查：双栏是否被正确合并成连续段落、彩色标题是否被识别为 `##` 级标题
+### 步骤 2：版面解析 → Markdown（✅ 已验证，用 MinerU）
 
-### 步骤 3：分块翻译（LLM + 术语表）
-- 按 Markdown 段落切块（建议 1 段 1 请求或 3-5 段合并，控制上下文）
-- 系统提示注入：`glossary/glossary_sakura.txt` + `aoz` 项目验证过的
-  「保留专名 / 不扩写 / 祈使句保持祈使」规则
-- 用 `dict_pre.json` 做前置锁定、`dict_post.json` 做后置纠错
+> ⚠️ 包名已变：用户提到的 `magic-pdf[full]` 是旧名，当前为 **`mineru` 4.0.12**。
+> 装在独立环境 `.venv-mineru`（避免污染主 `.venv` 的可用组合）。
 
-### 步骤 4：合成 EPUB
 ```powershell
-# pandoc 由 md 生成 epub（需装 pandoc）
-pandoc out\mineru\book.md -o out\alpine-skills-summer-zh.epub --toc --metadata title="高山技能（夏季）"
+$mk = ".venv-mineru\Scripts\mineru.exe"
+# 首次需起本地服务
+& $mk server start
+# 解析（-o 是输出文件路径，不是目录）
+& $mk parse "out\page100.pdf" -o "out\page100.md" --tier flash
 ```
-- 图片随 md 引用保留（MinerU 会把图切出来存 `images/`）
-- 生成后人工过一遍：目录层级、图注位置、代码/列表格式
+
+**实测结果（第 100 页）**：
+```
+## How to organize your group
+## Qualities of a leader
+Constantly aware of safety concerns.
+Strong team spirit; enthusiastic and generous.
+Eco-citizen: ...
+Technical skills, ...
+Attentive to the group.
+Knows how to get the group's attention...
+## Leader's code of conduct
+Evaluates participants' abilities.
+Investigates the route then informs participants...
+```
+→ **左栏 6 条全部读完，才进右栏**，双栏栏序完全正确（对比 OCR 探针的朴素顺序是交错的）。
+标题识别为 `##`，项目符号 `•` 保留。
+
+**档位差异（重要）**：
+
+| 档位 | 可用性 | 图片 | 说明 |
+|---|---|---|---|
+| `flash` | ✅ 立即可用 | ❌ **不导出**（图片变成 `doc:...` 内部引用） | 纯文本，EPUB 里没图 |
+| `standard` / `advanced` | 需先下模型 | ✅ | `mineru-kit models download --tier standard`（GB 级），并需 `parse_server.local.mode` 从 `disabled` 改为可用值 |
+
+> 若最终要带图的 EPUB，必须先解决 standard 档的模型下载与 parse-server 启用。
+
+### 步骤 3：分块翻译（✅ 脚本就绪，卡在密钥）
+
+```powershell
+$env:HUNYUAN_API_KEY = "<有效 key>"
+& .venv\Scripts\python.exe scripts\translate_md.py `
+    --md "out\page100.md" --out "out\page100_zh.md" `
+    --glossary glossary\glossary_sakura.txt `
+    --pre-dict glossary\dict_pre.json --post-dict glossary\dict_post.json `
+    --cache out\page100_cache.json
+```
+- `--dry-run` 先看切块；`--limit N` 只翻前 N 块试跑
+- 按块切分（标题/段落/列表/表格行），代码块与图片原样保留
+- 只把**本批实际出现**的术语塞进 system prompt，避免大词表污染
+- 按源文本 hash 缓存到 `--cache`，可中断续跑、重跑只补失败部分
+
+### 步骤 4：合成 EPUB（✅ 已验证）
+```powershell
+# pandoc 装在 %LOCALAPPDATA%\Pandoc，不在 PATH，用全路径
+$pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
+& $pandoc "out\page100_zh.md" -f markdown -o "out\alpine-skills-summer-zh.epub" `
+    --toc --metadata title="高山技能（夏季）" --metadata lang=zh-CN
+```
+- 生成的 EPUB 结构已验证（mimetype / container.xml / content.opf / toc.ncx / nav.xhtml / CSS）
+- flash 档没图，EPUB 里的图片引用会失效（见步骤 2 的档位差异）
 
 ### 步骤 5：校对
 术语一致性、页码/面包屑是否误译（EPUB 中可保留为小字注）、图注是否漏翻、祈使句语气。
@@ -142,9 +182,12 @@ pandoc out\mineru\book.md -o out\alpine-skills-summer-zh.epub --toc --metadata t
 | PDF 结构探针 | ✅ 完成（357 页 / 无文本层 / 300dpi / 双栏） |
 | 术语表初稿 | ✅ 已建（md 约 100 条；生成 pre-dict **91** / post-dict **32** / sakura **91** 行） |
 | 字典生成脚本 | ✅ 可运行，顺序自检 0 风险 |
-| 脚本骨架 | ✅ 已就位（probe / render / ocr_probe / verify_dicts） |
-| venv | ✅ 已独立（`.venv`，不再借用 A.O.Z 环境） |
+| 脚本骨架 | ✅ 已就位（probe / render / ocr_probe / extract_pages / verify_dicts / translate_md） |
+| venv | ✅ 主 `.venv` + MinerU 专用 `.venv-mineru`（互不干扰） |
 | **OCR 抽检** | ✅ **已完成**（10 页，10/10 存在栏序问题，已实现栏感知排序） |
+| **MinerU 版面解析** | ✅ **已验证**（flash 档，第 100 页双栏栏序正确；但 flash 不导出图片） |
+| **pandoc EPUB** | ✅ 已验证出包（结构正确，因 flash 无图故图片缺失） |
+| **翻译脚本** | ✅ 已写好（分块/术语注入/前后置字典/缓存续跑），**卡在 API key 无效** |
 | 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
 
 **已定决策**：
@@ -160,9 +203,14 @@ pandoc out\mineru\book.md -o out\alpine-skills-summer-zh.epub --toc --metadata t
 - [x] 装 OCR 引擎（paddleocr 3.7.0 + paddlepaddle 3.3.1）并跑完 OCR 抽检
 - [x] 建独立 `.venv`
 - [x] gh 登录（账号 Luchs0-0）
-- [ ] 建远程仓库并推送
-- [ ] 装 MinerU（`magic-pdf[full]`），试解析第 100 页验证双栏合并
-- [ ] 装 pandoc
+- [x] 建远程仓库并推送 → https://github.com/Luchs0-0/pdf-ebook-translator
+- [x] 装 MinerU（`mineru` 4.0.12，`magic-pdf` 为旧名）并验证第 100 页双栏合并 ✅
+- [x] 装 pandoc 3.13，验证出 EPUB ✅
+- [x] 写翻译脚本 `scripts/translate_md.py`
+- [ ] **拿到有效的混元 API key**（现有那把 401 无效）
+- [ ] 决定图片方案：启用 standard 档（需下 GB 级模型）或接受纯文本 EPUB
+- [ ] 整本 357 页 MinerU 解析
+- [ ] 整本翻译 + 分批校对
 
 ---
 
@@ -231,14 +279,38 @@ ImportError: DLL load failed while importing utf1632
 ```powershell
 $env:HUNYUAN_API_KEY  = "<你的腾讯云 API Key>"
 $env:HUNYUAN_BASE_URL = "https://api.hunyuan.cloud.tencent.com/v1"
-$env:HUNYUAN_MODEL    = "hunyuan-translation-plus"
+$env:HUNYUAN_MODEL    = "hy-mt2-plus"
 ```
 
 - 混元提供 **OpenAI 兼容**的 `/v1/chat/completions`，可直接复用 A.O.Z 项目的调用写法
-- **模型 ID 以腾讯云控制台实际开通的为准**：若控制台显示的不是 `-plus`
-  （亦有 `hunyuan-translation-lite` / `-pro`），改 `HUNYUAN_MODEL` 即可
+- **模型 ID = `hy-mt2-plus`**（腾讯混元翻译模型 plus，以控制台实际开通为准）
 - 若改走腾讯云 **TMT（机器翻译）** 而非混元大模型，则用 SecretId/SecretKey 签名，
   不是上面这套 OpenAI 兼容参数
+
+### 6. MinerU 4.x 是「服务 + 客户端」架构
+- `mineru parse` 不能直接跑，要先 `mineru server start`，否则报
+  `错误: 本地 mineru 服务未运行`
+- 本地重档（standard/advanced）默认**被禁用**：`parse_server.local.mode = disabled`，
+  直接跑会报 `Local parse-server is disabled. Use --tier flash or --remote.`
+- 只有 `--tier flash` 开箱可用；它**不导出图片**（图片变成 `doc:...` 内部引用）
+- 想用 standard 档：先 `mineru-kit models download --tier standard`（GB 级），
+  再调整 `parse_server.local.mode`
+- 另有 `mineru-kit parse`（不经服务的直连解析）可作为替代入口
+- 输出：`-o` 是**输出文件路径**，不是目录
+
+### 7. pandoc 装在 `%LOCALAPPDATA%\Pandoc`，不在 PATH
+winget 安装后当前会话调不到 `pandoc`，用全路径：
+```powershell
+& "$env:LOCALAPPDATA\Pandoc\pandoc.exe" --version
+```
+
+### 8. 混元 API key 报 401
+用 README/A.O.Z 里留的 `sk-qWAOc...` 请求返回：
+```
+401 invalid_api_key: Incorrect API key provided
+```
+→ 那把不是有效的混元 API key。需到
+https://console.cloud.tencent.com/hunyuan/start 新建，再设 `HUNYUAN_API_KEY`。
 
 ---
 
