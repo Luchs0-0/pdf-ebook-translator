@@ -194,9 +194,29 @@ ImportError: DLL load failed while importing utf1632
 ```powershell
 .venv\Scripts\python.exe -m pip list
 ```
-- 基础解释器：dsh 捆绑 Python 3.12（与 A.O.Z 同源，便于对比行为）
-- 已装：pymupdf / pillow / paddleocr / paddlepaddle / chardet==5.2.0
+
+- 基础解释器：dsh 捆绑 Python 3.12.14（与 A.O.Z 同源，便于对比行为）
+- **已锁定的关键版本**（这套组合在本机实测可跑）：
+
+| 包 | 版本 | 备注 |
+|---|---|---|
+| pymupdf | 2.0 | 附带 `pymupdf_layout` / `pymupdf4llm`（见下） |
+| pillow | 13.0.0 | |
+| chardet | **5.2.0** | 7.x 会 DLL 报错，必须锁这个 |
+| paddlepaddle | 3.3.1 | |
+| paddleocr | 3.7.0 | 需 `enable_mkldnn=False` |
+| paddlex | 3.7.2 | |
+| pandas | **2.2.3** | **3.1.0 在本机 DLL 崩溃**（`nattype`/`timezones` 导入失败），必须降级 |
+| numpy | 2.3.5 | paddle 依赖上限 |
+
+- 已装 VC++ 2015-2022 运行库（`winget install Microsoft.VCRedist.2015+.x64`），
+  缓解一类 `DLL load failed` 报错
 - `.gitignore` 已排除 `.venv/`
+
+> 💡 **顺带发现**：PyMuPDF 2.0 自带 `pymupdf_layout`（版面分析）与 `pymupdf4llm`（PDF→Markdown）。
+> 对**有文本层**的 PDF 可能是 MinerU 的轻量替代（无需 1 GB 依赖）；
+> 但本书是无文本层扫描件，`pymupdf4llm` 取不到文字，仍需 OCR。
+> 后续若处理电子版 PDF，优先试 `pymupdf4llm`。
 
 ### 4. PaddleOCR 首次运行会下载模型
 模型落在 `C:\Users\zhoun\.paddlex\official_models\`（约 200 MB），
