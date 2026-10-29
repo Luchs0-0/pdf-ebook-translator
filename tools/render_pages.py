@@ -2,8 +2,7 @@
 """按页码把 PDF 页面渲染成 PNG（默认 300dpi），供 OCR / 人工抽检。
 
 用法：
-    python render_pages.py --pdf "<PDF路径>" --pages "6,20,100-102" --out out/png
-    python render_pages.py --pages "100"                  # 用默认 PDF
+    python tools/render_pages.py --pdf workspace/source/book.pdf --pages "6,20,100-102" --out workspace/interim/png
 
 依赖：pymupdf
 """
@@ -15,8 +14,6 @@ try:
     import pymupdf
 except ImportError:
     sys.exit("缺少依赖：pip install pymupdf")
-
-DEFAULT_PDF = r"C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf"
 
 
 def parse_pages(spec, page_count):
@@ -38,9 +35,9 @@ def parse_pages(spec, page_count):
 
 def main():
     ap = argparse.ArgumentParser(description="Render PDF pages to PNG")
-    ap.add_argument("--pdf", default=DEFAULT_PDF)
+    ap.add_argument("--pdf", required=True, help="PDF 路径")
     ap.add_argument("--pages", required=True, help='页码，1 基，例："6,20,100-102"')
-    ap.add_argument("--out", default="out/png", help="输出目录")
+    ap.add_argument("--out", default="workspace/interim/png", help="输出目录")
     ap.add_argument("--dpi", type=int, default=300)
     args = ap.parse_args()
 

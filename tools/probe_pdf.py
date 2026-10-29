@@ -2,10 +2,9 @@
 """PDF 结构探针：页数 / 文本层 / 内嵌图分辨率 / 版面提示。
 
 用法：
-    python probe_pdf.py --pdf "<PDF路径>"
-    python probe_pdf.py            # 不带参数时用默认路径
+    python tools/probe_pdf.py --pdf workspace/source/book.pdf
 
-依赖：pymupdf（已装在 A.O.Z 的 venv 里）
+依赖：pymupdf
 """
 import argparse
 import sys
@@ -15,12 +14,10 @@ try:
 except ImportError:
     sys.exit("缺少依赖：pip install pymupdf")
 
-DEFAULT_PDF = r"C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf"
-
 
 def main():
     ap = argparse.ArgumentParser(description="Probe a scanned PDF's structure")
-    ap.add_argument("--pdf", default=DEFAULT_PDF, help="PDF 路径")
+    ap.add_argument("--pdf", required=True, help="PDF 路径")
     ap.add_argument("--scan-pages", type=int, default=60,
                     help="全文扫描前 N 页用于统计文本层覆盖率")
     args = ap.parse_args()

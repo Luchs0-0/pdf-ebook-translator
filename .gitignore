@@ -1,19 +1,9 @@
-# ---- 大文件 / 版权原件（不入库）----
-source/*.pdf
-source/*.PDF
-*.pdf
-!docs/**/*.pdf
+# ---- Runtime workspace: everything here is regenerable, nothing is tracked ----
+workspace/**
+!workspace/**/
+!workspace/**/.gitkeep
 
-# ---- 生成物 ----
-out/
-build/
-*.png
-*.jpg
-*.jpeg
-!docs/**/*.png
-!docs/**/*.jpg
-
-# ---- Python 虚拟环境（.venv / .venv-mineru / 任意 .venv-* 全部排除）----
+# ---- Python ----
 .venv/
 .venv*/
 venv/
@@ -22,20 +12,23 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+build/
+dist/
 
-# ---- 模型缓存（PaddleOCR / HF 动辄几百 MB）----
+# ---- Model caches (MinerU / PaddleOCR pull hundreds of MB) ----
 models/
 .cache/
-paddleocr/
-~/.paddlex/
+.paddlex/
 
-# ---- 本地配置与密钥 ----
+# ---- Secrets ----
 .env
+.env.*
 *.local.json
 secrets/
 
-# ---- 编辑器 / 系统 ----
+# ---- Editors / OS ----
 .vscode/
 .idea/
 Thumbs.db
 desktop.ini
+.DS_Store

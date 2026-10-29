@@ -1,0 +1,13 @@
+# Core pipeline dependencies (Python 3.10+)
+pymupdf>=2.0          # PDF read/render + layout helpers
+pillow>=10            # image size probing for column detection
+requests>=2.31        # OpenAI-compatible translation endpoint
+
+# --- Optional: OCR fallback (only needed if you skip MinerU) ---
+# paddlepaddle==3.3.1
+# paddleocr==3.7.0
+# chardet==5.2.0      # pins a version with working Windows wheels
+
+# --- External, not installable via pip ---
+# pandoc  https://pandoc.org/installing.html   (EPUB generation)
+# MinerU  pip install "mineru[core]"           (layout-aware parsing; keep it in a separate venv)

@@ -2,7 +2,7 @@
 """Extract a page range into a standalone PDF (for per-page experiments).
 
 用法：
-    python extract_pages.py --pdf "<PDF>" --pages "100" --out out/page100.pdf
+    python tools/extract_pages.py --pdf workspace/source/book.pdf --pages 100 --out workspace/interim/page100.pdf
 """
 import argparse
 import os
@@ -12,8 +12,6 @@ try:
     import pymupdf
 except ImportError:
     sys.exit("缺少依赖：pip install pymupdf")
-
-DEFAULT_PDF = r"C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf"
 
 
 def parse_pages(spec, count):
@@ -32,7 +30,7 @@ def parse_pages(spec, count):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pdf", default=DEFAULT_PDF)
+    ap.add_argument("--pdf", required=True, help="PDF 路径")
     ap.add_argument("--pages", required=True, help='1 基页码，例 "100" 或 "100-102"')
     ap.add_argument("--out", required=True, help="输出 PDF 路径")
     args = ap.parse_args()

@@ -17,13 +17,21 @@ import requests  # noqa: E402
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    from common import glossary_dir
+    gdir = str(glossary_dir())
+    ap = argparse.ArgumentParser(description="Translate blocks still missing from the cache")
     ap.add_argument("--md", required=True)
     ap.add_argument("--cache", required=True)
-    ap.add_argument("--glossary", default="glossary/glossary_sakura.txt")
-    ap.add_argument("--post-dict", default="glossary/dict_post.json")
+    ap.add_argument("--book", default="", help="书目名（用于推导 glossary 默认路径）")
+    ap.add_argument("--glossary", default="", help="术语表（默认 <glossary-dir>/glossary_sakura.txt）")
+    ap.add_argument("--post-dict", default="", help="后置字典（默认 dict_post.json）")
     ap.add_argument("--apply", action="store_true", help="实际调用并写入缓存")
     args = ap.parse_args()
+
+    if args.book:
+        gdir = str(glossary_dir(args.book))
+    args.glossary = args.glossary or os.path.join(gdir, "glossary_sakura.txt")
+    args.post_dict = args.post_dict or os.path.join(gdir, "dict_post.json")
 
     md = io.open(args.md, encoding="utf-8").read()
     blocks = T.split_blocks(md)

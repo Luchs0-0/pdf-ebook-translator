@@ -1,28 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Markdown 分块翻译：腾讯混元（OpenAI 兼容端点）+ 术语表注入 + 前后置字典。
+"""Markdown 分块翻译：腾讯混元 / 任意 OpenAI 兼容端点 + 术语表注入 + 前后置字典。
 
 设计要点
 --------
-1. **结构保真**：按 Markdown 块切分（标题/段落/列表项/表格行），逐块替换，
-   代码块、图片、水平线原样保留。
-2. **批量请求**：一次请求送多条片段（带编号标记），减少往返与费用。
+1. **结构保真**：按 Markdown 块切分（标题/段落/列表项/表格行/围栏表格），
+   逐块替换；图片、水平线、HTML 注释原样保留。
+2. **批量请求**：一次请求送多条片段（带编号），减少往返与费用。
 3. **术语表注入**：读取 glossary_sakura.txt（`英->中` 每行一条），
-   只把本批片段里实际出现的词条塞进 system prompt，避免污染。
+   只把本批片段里实际出现的词条塞进 system prompt。
 4. **前后置字典**：dict_pre.json 先做英文->定译替换，dict_post.json 做译文兜底纠错。
-5. **断点续跑**：每个片段的译文按源文本 hash 缓存到 --cache，
-   重跑时命中缓存直接跳过（省钱、可中断）。
+5. **断点续跑**：译文按源文本 hash 缓存到 --cache，重跑命中即跳过（省钱、可中断）。
 
 用法
 ----
-    set HUNYUAN_API_KEY=<key>
-    python translate_md.py --md out/mineru/book.md --out out/book_zh.md
-    python translate_md.py --md ... --limit 5          # 只翻前 5 个片段（试跑）
-    python translate_md.py --md ... --dry-run          # 只统计片段，不请求
+    export HUNYUAN_API_KEY=<key>
+    python tools/translate_md.py --md workspace/interim/parse-x/markdown.md \
+        --out workspace/interim/book_zh.md
+    python tools/translate_md.py --md ... --dry-run     # 只统计片段，不请求
+    python tools/translate_md.py --md ... --limit 20    # 只翻前 20 块（试跑）
 
 环境变量
 --------
-    HUNYUAN_API_KEY   必填
-    HUNYUAN_BASE_URL  默认 https://api.hunyuan.cloud.tencent.com/v1
+    HUNYUAN_API_KEY   必填（仅当确有未翻译块时）
+    HUNYUAN_BASE_URL  默认 https://tokenhub-intl.tencentmaas.com/v1
     HUNYUAN_MODEL     默认 hy-mt2-plus
 """
 import argparse
@@ -32,6 +32,13 @@ import os
 import re
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from common import glossary_dir, INTERIM_DIR
+except ImportError:  # 允许单独拷走使用
+    glossary_dir = lambda: "glossary"  # noqa: E731
+    INTERIM_DIR = "workspace/interim"
 
 try:
     import requests
@@ -309,19 +316,29 @@ def cache_lookup(cache, text):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Markdown chunked translation via Hunyuan")
+    gdir = str(glossary_dir())
+    ap = argparse.ArgumentParser(description="Markdown chunked translation (OpenAI-compatible)")
     ap.add_argument("--md", required=True, help="输入 Markdown")
     ap.add_argument("--out", required=True, help="输出 Markdown")
-    ap.add_argument("--glossary", default="glossary/glossary_sakura.txt")
-    ap.add_argument("--pre-dict", default="glossary/dict_pre.json")
-    ap.add_argument("--post-dict", default="glossary/dict_post.json")
-    ap.add_argument("--cache", default="out/translate_cache.json")
+    ap.add_argument("--book", default="", help="书目名（用于推导 glossary 默认路径）")
+    ap.add_argument("--glossary", default="",
+                    help="术语表（默认 <glossary-dir>/glossary_sakura.txt）")
+    ap.add_argument("--pre-dict", default="", help="前置字典（默认 dict_pre.json）")
+    ap.add_argument("--post-dict", default="", help="后置字典（默认 dict_post.json）")
+    ap.add_argument("--cache", default=str(INTERIM_DIR / "translate_cache.json"))
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--batch", type=int, default=8, help="每请求片段数")
     ap.add_argument("--limit", type=int, default=0, help="只处理前 N 个片段（0=全部）")
     ap.add_argument("--dry-run", action="store_true", help="只统计，不请求")
     args = ap.parse_args()
+
+    # 未显式指定时，按书目推导字典路径
+    if args.book:
+        gdir = str(glossary_dir(args.book))
+    args.glossary = args.glossary or os.path.join(gdir, "glossary_sakura.txt")
+    args.pre_dict = args.pre_dict or os.path.join(gdir, "dict_pre.json")
+    args.post_dict = args.post_dict or os.path.join(gdir, "dict_post.json")
 
     with open(args.md, encoding="utf-8") as f:
         md = f.read()

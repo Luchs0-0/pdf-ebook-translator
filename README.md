@@ -1,373 +1,244 @@
-# PDF 电子书翻译管线（pdf-ebook-translator）
+# pdf-ebook-translator
 
-把**扫描版 PDF 电子书**翻成简体中文的可复用管线：
+Turn **scanned PDF ebooks** into a translated edition (EPUB + PDF), with layout-aware parsing,
+glossary-constrained LLM translation, and resumable, cache-backed runs.
+
+Built for real books — two-column text, figures, tables, running headers — not for chat bubbles.
 
 ```
-PDF 结构探针 → 版面感知解析 → LLM 分块翻译（术语表注入）→ EPUB 重排
+PDF (scanned, no text layer)
+   │  MinerU (layout-aware parse, exports figures)
+   ▼
+Markdown + images/
+   │  chunked translation: glossary injection + pre/post dictionaries + hash cache
+   ▼
+translated Markdown
+   │  pandoc                     │  pandoc → HTML → headless Chrome
+   ▼                             ▼
+EPUB (with figures)          PDF (A4, CJK fonts)
 ```
-
-**当前实例**：UIAA《Alpine Skills Summer》登山技术手册（357 页 / 双栏 / 纯扫描件）。
-管线本身与具体书目解耦，后续可挂其他书（每本书一套 glossary + source）。
-
-本仓库从 `../aoz/`（高达 A.O.Z 漫画汉化项目）拆出：
-复用其中的 LLM 翻译层与术语表机制，但**不复用**漫画的图像处理管线（原因见 `docs/管线选型.md`）。
 
 ---
 
-## 一、源文件
+## Why not just use a manga translator?
 
-| 项 | 说明 |
+Most comic pipelines do: detect speech bubbles → OCR → translate → **erase text pixels and re-typeset**.
+That works for short lines on white bubbles. On a two-column technical book it fails in three ways:
+
+| Problem | What happens |
 |---|---|
-| 原件 | `C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf` |
-| 大小 | 56.8 MB |
-| 页数 | 357 页 |
-| 性质 | **纯扫描件**，无文本层（PyMuPDF 抽样 60 页字符数均为 0） |
-| 内嵌图 | 1114×1580 px，**300 dpi**，每页 1 张 JPEG |
-| 版面 | 双栏正文 + 彩色章节标题 + 菱形项目符号 + 全幅照片 + 页脚面包屑/页码 |
-| 版权 | **原件不入库**（`.gitignore` 已排除 `*.pdf`）。入库前请自行确认授权范围 |
+| Detector is trained on bubbles | Dense two-column body text gets split into fragments, and the two columns interleave |
+| Erase-and-redraw | Re-typesetting Chinese into a 357-page colour layout is far more work than the result is worth |
+| Bubble-level semantics | Books need paragraph-level reading order, not bubble order |
 
-> ⚠️ 这本书的难点**不在翻译，而在双栏阅读顺序与版面还原**。
+Measured on the sample book: **10 out of 10 pages interleaved the two columns** when sorted by `y` only.
+A layout-aware parser is not an optimisation here — it is a requirement.
+See [`docs/pipeline.md`](docs/pipeline.md).
 
 ---
 
-## 二、项目结构
+## Repository layout
 
 ```
 pdf-ebook-translator/
-├─ README.md                  ← 本文档
-├─ .gitignore
-├─ source/                    ← 放原始 PDF（不入库）
-├─ glossary/
-│   ├─ alpine_glossary.md     ← 术语表（唯一真源，人工维护）
-│   ├─ build_dicts.py         ← 由术语表生成三个字典文件
-│   ├─ dict_pre.json          ← 翻译前替换
-│   ├─ dict_post.json         ← 翻译后纠错
-│   └─ glossary_sakura.txt    ← LLM 术语表注入格式（原词->译词）
-├─ scripts/
-│   ├─ probe_pdf.py           ← PDF 结构探针（页数/文本层/分辨率/版面）
-│   ├─ render_pages.py        ← 按页码渲染 300dpi PNG
-│   ├─ ocr_probe.py           ← OCR 抽检 + 双栏阅读顺序校验
-│   └─ verify_dicts.py        ← 校验字典条数/样本/顺序风险
+├─ tools/                     # all scripts (CLI, argparse, no hard-coded paths)
+│   ├─ common.py              # shared path helpers (repo root, workspace, book dirs)
+│   ├─ probe_pdf.py           # what is this PDF? pages / text layer / image dpi / layout
+│   ├─ extract_pages.py       # pull a page range into a standalone PDF
+│   ├─ render_pages.py        # render pages to PNG at a given dpi
+│   ├─ ocr_probe.py           # OCR + two-column reading-order check (optional path)
+│   ├─ translate_md.py        # chunked translation, glossary + dict + cache
+│   ├─ patch_cache.py         # translate only the few blocks still missing
+│   ├─ build_pdf.py           # Markdown → PDF (pandoc + headless Chrome/Edge)
+│   ├─ verify_dicts.py        # dictionary sanity checks
+│   └─ check_*.py             # quality reports for markdown / translation / pdf
+├─ books/
+│   └─ alpine-skills-summer/  # one directory per book
+│       ├─ README.md
+│       └─ glossary/          # glossary.md is the source of truth
+│           ├─ glossary.md
+│           ├─ build_dicts.py # glossary.md → dict_pre / dict_post / sakura glossary
+│           ├─ dict_pre.json
+│           ├─ dict_post.json
+│           └─ glossary_sakura.txt
 ├─ docs/
-│   └─ 管线选型.md            ← 为什么换工具、候选方案对比
-└─ out/                       ← 输出（不入库）
+│   ├─ pipeline.md            # design rationale + tool comparison
+│   └─ troubleshooting.md     # every environment trap we actually hit
+├─ workspace/                 # ALL runtime I/O lives here (nothing is committed)
+│   ├─ source/                # put the original PDF here
+│   ├─ interim/               # parse output, translated markdown, caches
+│   └─ output/                # final EPUB / PDF
+└─ requirements.txt
 ```
+
+`workspace/` is intentionally git-ignored except for its `.gitkeep` files: it only ever holds
+regenerable artefacts, so a fresh clone starts clean.
 
 ---
 
-## 三、统一约束（所有脚本共用）
+## Requirements
 
-Python 解释器用 A.O.Z 项目那套 venv（已装 torch / PyMuPDF / pymupdf）：
-
-```
-C:\Users\zhoun\personal-project\aoz\mit-venv\Scripts\python.exe
-```
-
-本仓库暂不建独立 venv。若后续要装 PaddleOCR（约 500 MB+），
-建议在仓库内单独建 `.venv` 并纳入 `.gitignore`。
-
-**中文落盘规则**（从 A.O.Z 项目继承的坑）：
-不要在 PowerShell 命令里直接写中文字面量（会被转成乱码），
-中文一律写进 `.py` / `.md` 文件，由 Python 以 `encoding="utf-8"` 读写；
-生成 JSON 时用 `ensure_ascii=True`。
-
-**控制台看中文**：PowerShell 默认代码页会让 Python 输出的中文变乱码，
-运行前先执行这两行（仅影响显示，不影响文件内容）：
-```powershell
-chcp 65001 > $null
-$env:PYTHONIOENCODING = "utf-8"
-```
-
----
-
-## 四、工作流（建议顺序）
-
-### 步骤 0：结构探针（已完成，可复跑）
-```powershell
-$py = "C:\Users\zhoun\personal-project\aoz\mit-venv\Scripts\python.exe"
-& $py scripts\probe_pdf.py --pdf "C:\Users\zhoun\Downloads\dokumen.pub_alpine-skills-summer.pdf"
-```
-
-### 步骤 1：OCR 抽检 + 栏序验证（✅ 已完成，见下方结论）
-```powershell
-# 渲染 10 页样张
-& $py scripts\render_pages.py --pages "6,20,60,100,140,200,240,280,320,350" --out out\png
-# 跑 OCR 并检查"先左栏后右栏"的阅读顺序
-& $py scripts\ocr_probe.py --dir out\png --dump out\ocr_probe.json
-```
-
-**实测结论（10 页样本）**：
-- OCR 识别质量良好：每页 6-66 个文本块，英文印刷体基本全中
-- **10/10 页在"朴素顺序"（先上后下、再左后右）下左右栏严重交错**
-  典型例子（第 20 页）：`Limestone`（左栏 y=110）→ `Granite`（右栏 y=99）→ 又跳回左栏
-- 即：**必须**用栏感知排序或版面感知工具，不能靠 y 坐标排序
-- 已实现栏感知排序（跨栏判定 = 宽度≥70% 且横跨中线；页脚区 y>80% 单独处理），
-  在抽样页上能把左栏正文排成连续段落
-
-> 这说明路线 B（MinerU 版面解析）是必需项而非可选项。
-
-### 步骤 2：版面解析 → Markdown（✅ 已验证，用 MinerU）
-
-> ⚠️ 包名已变：用户提到的 `magic-pdf[full]` 是旧名，当前为 **`mineru` 4.0.12**。
-> 装在独立环境 `.venv-mineru`（避免污染主 `.venv` 的可用组合）。
-
-```powershell
-$mk = ".venv-mineru\Scripts\mineru.exe"
-# 首次需起本地服务
-& $mk server start
-# 解析（-o 是输出文件路径，不是目录）
-& $mk parse "out\page100.pdf" -o "out\page100.md" --tier flash
-```
-
-**实测结果（第 100 页）**：
-```
-## How to organize your group
-## Qualities of a leader
-Constantly aware of safety concerns.
-Strong team spirit; enthusiastic and generous.
-Eco-citizen: ...
-Technical skills, ...
-Attentive to the group.
-Knows how to get the group's attention...
-## Leader's code of conduct
-Evaluates participants' abilities.
-Investigates the route then informs participants...
-```
-→ **左栏 6 条全部读完，才进右栏**，双栏栏序完全正确（对比 OCR 探针的朴素顺序是交错的）。
-标题识别为 `##`，项目符号 `•` 保留。
-
-**档位差异（重要）**：
-
-| 档位 | 可用性 | 图片 | 说明 |
-|---|---|---|---|
-| `flash` | ✅ 立即可用 | ❌ **不导出**（图片变成 `doc:...` 内部引用） | 纯文本，EPUB 里没图 |
-| `standard` / `advanced` | 需先下模型 | ✅ | `mineru-kit models download --tier standard`（GB 级），并需 `parse_server.local.mode` 从 `disabled` 改为可用值 |
-
-> 若最终要带图的 EPUB，必须先解决 standard 档的模型下载与 parse-server 启用。
-
-### 步骤 3：分块翻译（✅ 脚本就绪，卡在密钥）
-
-```powershell
-$env:HUNYUAN_API_KEY = "<有效 key>"
-& .venv\Scripts\python.exe scripts\translate_md.py `
-    --md "out\page100.md" --out "out\page100_zh.md" `
-    --glossary glossary\glossary_sakura.txt `
-    --pre-dict glossary\dict_pre.json --post-dict glossary\dict_post.json `
-    --cache out\page100_cache.json
-```
-- `--dry-run` 先看切块；`--limit N` 只翻前 N 块试跑
-- 按块切分（标题/段落/列表/表格行），代码块与图片原样保留
-- 只把**本批实际出现**的术语塞进 system prompt，避免大词表污染
-- 按源文本 hash 缓存到 `--cache`，可中断续跑、重跑只补失败部分
-
-### 步骤 4：合成 EPUB（✅ 已验证）
-```powershell
-# pandoc 装在 %LOCALAPPDATA%\Pandoc，不在 PATH，用全路径
-$pandoc = "$env:LOCALAPPDATA\Pandoc\pandoc.exe"
-& $pandoc "out\page100_zh.md" -f markdown -o "out\alpine-skills-summer-zh.epub" `
-    --toc --metadata title="高山技能（夏季）" --metadata lang=zh-CN
-```
-- 生成的 EPUB 结构已验证（mimetype / container.xml / content.opf / toc.ncx / nav.xhtml / CSS）
-- flash 档没图，EPUB 里的图片引用会失效（见步骤 2 的档位差异）
-
-### 步骤 5：校对
-术语一致性、页码/面包屑是否误译（EPUB 中可保留为小字注）、图注是否漏翻、祈使句语气。
-
----
-
-## 五、当前状态
-
-| 步骤 | 状态 |
-|---|---|
-| PDF 结构探针 | ✅ 完成（357 页 / 无文本层 / 300dpi / 双栏） |
-| 术语表初稿 | ✅ 已建（md 约 100 条；生成 pre-dict **91** / post-dict **32** / sakura **91** 行） |
-| 字典生成脚本 | ✅ 可运行，顺序自检 0 风险 |
-| 脚本骨架 | ✅ 已就位（probe / render / ocr_probe / extract_pages / verify_dicts / translate_md） |
-| venv | ✅ 主 `.venv` + MinerU 专用 `.venv-mineru`（互不干扰） |
-| **OCR 抽检** | ✅ **已完成**（10 页，10/10 存在栏序问题，已实现栏感知排序） |
-| **MinerU 版面解析** | ✅ **已验证**（flash 档，第 100 页双栏栏序正确；但 flash 不导出图片） |
-| **整本解析** | ✅ **已完成**：357/357 页、**373,226 字符**（均 1045/页）、629 个标题、684 个图片引用、0 近空页 |
-| **pandoc EPUB** | ✅ 已验证出包（结构正确，因 flash 无图故图片缺失） |
-| **翻译脚本** | ✅ 已写好并跑通全本 |
-| **整本翻译** | ✅ **已完成**：3367 块全部替换、**0 失败**、中文占比 **87.5%**（88,300 字） |
-| **文本版 EPUB** | ✅ 已生成：`out\alpine-skills-summer-zh.epub`（259 KB / 89 章） |
-| **带图版** | ✅ **已生成**：`out\alpine-skills-summer-zh-illustrated.epub`（**27.34 MB / 688 图 / 785 条目**） |
-
-### 产物清单（`out\`，已 gitignore）
-
-| 文件 | 说明 |
-|---|---|
-| `alpine-skills-summer-zh-illustrated.epub` | **带图版 EPUB（交付用）**，688 图 / 27.33 MB |
-| `alpine-skills-summer-zh.pdf` | **中文 PDF（交付用）**，401 页 / 30.63 MB / 中文占比 96.8% |
-| `alpine-skills-summer-zh.epub` | 纯文本版 EPUB（259 KB，体积小便于快速阅读） |
-| `book_std_zh.md` | 最终中文稿（带图片引用） |
-| `book_std\markdown.md` + `book_std\images\` | standard 档解析原始产物（709 张图） |
-| `book_cache.json` | 翻译缓存（3,632 条，可续跑） |
-
-**PDF 路线说明**：本机没有 LaTeX（xelatex）也没有 LibreOffice，
-所以 PDF 走 **Markdown → pandoc(HTML，图片 base64 内嵌) → Chrome headless 打印**。
-中文用系统"微软雅黑"，A4 版式，已关闭浏览器自带页眉页脚。
-脚本：`scripts/make_pdf.py`（自动探测 pandoc 与 Chrome/Edge）。
-
-**重新生成链**：
-```powershell
-# 1) 解析（带图，约 12 分钟）
-& .venv-mineru\Scripts\mineru-kit.exe parse "<PDF>" -o out\book_std.zip --tier standard --format zip --pages all
-# 解压到 out\book_std\
-# 2) 翻译（命中缓存时无需 API key，几分钟）
-& .venv\Scripts\python.exe scripts\translate_md.py --md out\book_std\markdown.md --out out\book_std_zh.md --cache out\book_cache.json
-# 3) EPUB
-& "$env:LOCALAPPDATA\Pandoc\pandoc.exe" out\book_std_zh.md -f markdown -o out\alpine-skills-summer-zh-illustrated.epub `
-    --toc --resource-path="out\book_std" --metadata title="高山技能手册（夏季）" --metadata lang=zh-CN
-# 4) PDF
-& .venv\Scripts\python.exe scripts\make_pdf.py --md out\book_std_zh.md --out out\alpine-skills-summer-zh.pdf `
-    --resource-path out\book_std --title "高山技能手册（夏季）"
-```
-
-> 说明：插图本身是原书的英文图（等压线数值、图内标注等），本次只翻译正文与图注，不重绘图片。
-| 版面解析 / 试翻 / 整本 / 校对 | ❌ 未开始 |
-
-**已定决策**：
-- **翻译路线 = B（EPUB 重排）**：MinerU 解析 → Markdown → LLM 分块翻译 → pandoc 生成 EPUB。
-  理由：技术手册的价值在内容可检索/可重排，原版彩色设计的还原成本不值。
-- **OCR 引擎 = PaddleOCR**：与 A.O.Z 漫画项目保持一致，精度已验证。
-- **仓库名 = `pdf-ebook-translator`**：通用命名——这是**可复用的 PDF 电子书翻译管线**，
-  UIAA《Alpine Skills Summer》是第一个实例（后续可挂其他书，每本书一套 `glossary` + `source`）。
-- **翻译引擎 = 腾讯混元翻译模型 plus**（Hunyuan），替换原计划的硅基流动（key 已作废）。
-
-### 已知待办
-
-- [x] 装 OCR 引擎（paddleocr 3.7.0 + paddlepaddle 3.3.1）并跑完 OCR 抽检
-- [x] 建独立 `.venv`
-- [x] gh 登录（账号 Luchs0-0）
-- [x] 建远程仓库并推送 → https://github.com/Luchs0-0/pdf-ebook-translator
-- [x] 装 MinerU（`mineru` 4.0.12，`magic-pdf` 为旧名）并验证第 100 页双栏合并 ✅
-- [x] 装 pandoc 3.13，验证出 EPUB ✅
-- [x] 写翻译脚本 `scripts/translate_md.py`
-- [ ] **拿到有效的混元 API key**（现有那把 401 无效）
-- [ ] 决定图片方案：启用 standard 档（需下 GB 级模型）或接受纯文本 EPUB
-- [x] 整本 357 页 MinerU 解析（`out\book.md`，373,226 字符，0 近空页）
-- [ ] 整本翻译 + 分批校对
-
----
-
-## 五之二、环境坑位（本机实测）
-
-### 1. Paddle 3.x CPU 的 oneDNN 缺陷（必须关 MKLDNN）
-```
-NotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute not support
-  [pir::ArrayAttribute<pir::DoubleAttribute>]
-```
-解法（脚本已内置）：
-```python
-os.environ["FLAGS_use_mkldnn"] = "0"
-PaddleOCR(..., enable_mkldnn=False)
-```
-
-### 2. chardet 7.7.0 的 DLL 报错
-```
-ImportError: DLL load failed while importing utf1632
-```
-解法：`pip install "chardet==5.2.0"`
-
-### 3. venv 已独立（原风险已消除）
-最初借用了 `aoz/mit-venv`，装 paddleocr 时 numpy 被降到 2.3.5、cv2 换成 4.10.0
-（已验证 A.O.Z 的 manga_translator 仍能启动，但属版本漂移）。
-
-**现已为本项目建独立 `.venv`**，不再共享，两边互不影响：
-
-```powershell
-.venv\Scripts\python.exe -m pip list
-```
-
-- 基础解释器：dsh 捆绑 Python 3.12.14（与 A.O.Z 同源，便于对比行为）
-- **已锁定的关键版本**（这套组合在本机实测可跑）：
-
-| 包 | 版本 | 备注 |
+| Component | Why | Notes |
 |---|---|---|
-| pymupdf | 2.0 | 附带 `pymupdf_layout` / `pymupdf4llm`（见下） |
-| pillow | 13.0.0 | |
-| chardet | **5.2.0** | 7.x 会 DLL 报错，必须锁这个 |
-| paddlepaddle | 3.3.1 | |
-| paddleocr | 3.7.0 | 需 `enable_mkldnn=False` |
-| paddlex | 3.7.2 | |
-| pandas | **2.2.3** | **3.1.0 在本机 DLL 崩溃**（`nattype`/`timezones` 导入失败），必须降级 |
-| numpy | 2.3.5 | paddle 依赖上限 |
+| Python 3.10+ | pipeline | `pip install -r requirements.txt` |
+| [MinerU](https://github.com/opendatalab/MinerU) `4.x` | layout-aware parsing **and figure export** | `pip install "mineru[core]"`. Heaviest dependency — keep it in its **own** venv |
+| [pandoc](https://pandoc.org/installing.html) `3.x` | Markdown → EPUB / HTML | On Windows it may install to `%LOCALAPPDATA%\Pandoc` and stay off `PATH` |
+| Chrome or Edge | Markdown → PDF | used headless; no LaTeX install needed |
+| Translation endpoint | any OpenAI-compatible API | this repo defaults to Tencent MaaS (`hy-mt2-plus`) |
 
-- 已装 VC++ 2015-2022 运行库（`winget install Microsoft.VCRedist.2015+.x64`），
-  缓解一类 `DLL load failed` 报错
-- `.gitignore` 已排除 `.venv/`
-
-> 💡 **顺带发现**：PyMuPDF 2.0 自带 `pymupdf_layout`（版面分析）与 `pymupdf4llm`（PDF→Markdown）。
-> 对**有文本层**的 PDF 可能是 MinerU 的轻量替代（无需 1 GB 依赖）；
-> 但本书是无文本层扫描件，`pymupdf4llm` 取不到文字，仍需 OCR。
-> 后续若处理电子版 PDF，优先试 `pymupdf4llm`。
-
-### 4. PaddleOCR 首次运行会下载模型
-模型落在 `C:\Users\zhoun\.paddlex\official_models\`（约 200 MB），
-首次运行慢属正常；后续会命中缓存。**该缓存是全局共享的**，
-新建 venv 不会触发重新下载。
-
-**第 5 项 · 翻译引擎配置（腾讯 MaaS / 混元翻译）**
-
-> ⚠️ 注意：端点**不是**混元官网，而是腾讯 MaaS 平台（tokenhub-intl）。
-
-```powershell
-$env:HUNYUAN_API_KEY  = "<腾讯云 API Key>"
-$env:HUNYUAN_BASE_URL = "https://tokenhub-intl.tencentmaas.com/v1"   # 已在脚本里设为默认
-$env:HUNYUAN_MODEL    = "hy-mt2-plus"                                # 已在脚本里设为默认
-```
-
-模型探测结论（实测）：
-
-| 模型 ID | 结果 |
-|---|---|
-| `hy-mt2-plus` | ✅ **可用**，翻译质量好，祈使句与术语都能守住 |
-| `hy4-preview` | ⚠️ 60 秒超时（疑似推理型，慢） |
-| `hunyuan-translation-plus` | ❌ 400，服务 ID 不存在 |
-| `hy-mt2` | ❌ 400，服务 ID 不存在 |
-
-- 混元提供 **OpenAI 兼容**的 `/v1/chat/completions`，可直接复用 A.O.Z 项目的调用写法
-- 若改走腾讯云 **TMT（机器翻译）** 而非混元大模型，则用 SecretId/SecretKey 签名，
-  不是上面这套 OpenAI 兼容参数
-
-### 6. MinerU 4.x 是「服务 + 客户端」架构
-- `mineru parse` 不能直接跑，要先 `mineru server start`，否则报
-  `错误: 本地 mineru 服务未运行`
-- 本地重档（standard/advanced）默认**被禁用**：`parse_server.local.mode = disabled`，
-  直接跑会报 `Local parse-server is disabled. Use --tier flash or --remote.`
-- 只有 `--tier flash` 开箱可用；它**不导出图片**（图片变成 `doc:...` 内部引用）
-- 想用 standard 档：先 `mineru-kit models download --tier standard`（GB 级），
-  再调整 `parse_server.local.mode`
-- 另有 `mineru-kit parse`（不经服务的直连解析）可作为替代入口
-- 输出：`-o` 是**输出文件路径**，不是目录
-
-### 7. pandoc 装在 `%LOCALAPPDATA%\Pandoc`，不在 PATH
-winget 安装后当前会话调不到 `pandoc`，用全路径：
-```powershell
-& "$env:LOCALAPPDATA\Pandoc\pandoc.exe" --version
-```
-
-### 8. 混元 API key 报 401
-用 README/A.O.Z 里留的 `sk-qWAOc...` 请求返回：
-```
-401 invalid_api_key: Incorrect API key provided
-```
-→ 那把不是有效的混元 API key。需到
-https://console.cloud.tencent.com/hunyuan/start 新建，再设 `HUNYUAN_API_KEY`。
+No LaTeX and no LibreOffice are required.
 
 ---
 
-## 六、与 A.O.Z 项目的复用关系
+## Quick start
 
-| 资产 | 复用？ | 说明 |
-|---|---|---|
-| LLM 翻译层（OpenAI 兼容端点） | ✅ 全部 | 换 target lang 与 prompt 即可 |
-| 术语表 / 字典机制 | ✅ 机制 | 内容按登山术语重建 |
-| venv / PyMuPDF / torch | ✅ 全部 | 直接指向 A.O.Z 的 venv |
-| 代理绕行、编码规避经验 | ✅ 全部 | 见 A.O.Z README 第四节 |
-| **漫画检测器（气泡）** | ❌ | 双栏正文会被切碎 |
-| **抹字 + 回填（inpaint）** | ❌ | 彩色排版书重排代价过高 |
-| **气泡分组逻辑** | ❌ | 书需段落级阅读顺序 |
+```bash
+git clone <this repo>
+cd pdf-ebook-translator
 
-详见 `docs/管线选型.md`。
+python -m venv .venv
+.venv/Scripts/activate          # Windows;  source .venv/bin/activate elsewhere
+pip install -r requirements.txt
+
+# MinerU in a separate env — it pulls a lot and pins its own versions
+python -m venv .venv-mineru
+.venv-mineru/Scripts/python -m pip install "mineru[core]"
+```
+
+### 1. Inspect the source PDF
+
+```bash
+python tools/probe_pdf.py --pdf workspace/source/book.pdf
+```
+Tells you: page count, whether there is a text layer, embedded image DPI, and whether the layout
+is multi-column. If a text layer exists you can skip OCR entirely.
+
+### 2. Parse it (layout-aware, with figures)
+
+```bash
+# one-time: fetch the "standard" tier models (needed for figure export)
+.venv-mineru/Scripts/mineru-kit models download --tier standard --source modelscope
+
+# parse the whole book; --format zip keeps markdown + images/ together
+.venv-mineru/Scripts/mineru-kit parse workspace/source/book.pdf \
+    -o workspace/interim/parse.zip --tier standard --format zip --pages all
+
+# unzip next to it
+mkdir workspace/interim/parse && tar -xf workspace/interim/parse.zip -C workspace/interim/parse
+```
+
+> **Tier matters.** `--tier flash` is instant and needs no model download, but it **does not export
+> images** — figures become `doc:...` placeholders. `standard` exports `images/page_N_image_M.jpg`.
+> `mineru parse` (the server-backed CLI) refuses to run locally with `parse-server is disabled`;
+> `mineru-kit parse` is the direct entry point that works.
+
+### 3. Translate
+
+```bash
+export HUNYUAN_API_KEY=<your key>
+export HUNYUAN_BASE_URL=https://tokenhub-intl.tencentmaas.com/v1   # default
+export HUNYUAN_MODEL=hy-mt2-plus                                   # default
+
+python tools/translate_md.py \
+    --md  workspace/interim/parse/markdown.md \
+    --out workspace/interim/book_zh.md \
+    --book alpine-skills-summer \
+    --cache workspace/interim/translate_cache.json
+```
+
+Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | count chunks and estimated requests, no API calls |
+| `--limit 20` | translate only the first 20 chunks (smoke test) |
+| `--batch 6` | chunks per request (lower it if responses get truncated) |
+| `--book <name>` | resolves glossary/dict paths under `books/<name>/glossary/` |
+
+Re-running is cheap: every translated chunk is cached by a hash of its source text, so an
+interrupted run resumes, and a glossary fix only re-translates affected chunks.
+
+### 4. Build the EPUB
+
+```bash
+pandoc workspace/interim/book_zh.md -f markdown \
+    -o workspace/output/book-zh.epub \
+    --toc --resource-path=workspace/interim/parse \
+    --metadata title="…" --metadata lang=zh-CN
+```
+
+### 5. Build the PDF
+
+```bash
+python tools/build_pdf.py \
+    --md  workspace/interim/book_zh.md \
+    --out workspace/output/book-zh.pdf \
+    --resource-path workspace/interim/parse \
+    --title "…"
+```
+Uses `--embed-resources` (images inlined as base64) plus `@page` CSS for A4 and CJK fonts,
+then prints with headless Chrome/Edge and the browser's own header/footer disabled.
+
+---
+
+## Books in this repo
+
+| Book | Pages | Figures | Output | Notes |
+|---|---|---|---|---|
+| `alpine-skills-summer` (UIAA) | 401 (reflowed) | 688 | EPUB 27 MB · PDF 31 MB | scanned, 300 dpi, two-column |
+
+Each book directory holds its own glossary; the pipeline itself is language- and book-agnostic.
+See [`books/alpine-skills-summer/README.md`](books/alpine-skills-summer/README.md).
+
+---
+
+## Design notes
+
+**Glossary is the single source of truth.** Edit `books/<book>/glossary/glossary.md`, run
+`build_dicts.py`, and it regenerates three artefacts:
+
+- `dict_pre.json` — source-side substitutions applied *before* translation (locks terminology in)
+- `dict_post.json` — output-side corrections applied *after* translation (repairs known mistranslations)
+- `glossary_sakura.txt` — `source->target` lines injected into the LLM system prompt, filtered to
+  only the terms that actually occur in the current batch
+
+Two dictionary hazards are checked automatically, because both bit us in practice:
+
+1. **Prefix collisions** — a short key must never sit before a longer key that starts with it,
+   or `belay station` becomes `保护站` plus leftovers.
+2. **Self-consuming post rules** — if a post-dict *value* starts with its own *key*
+   (`团队动力 → 团队动力学`), every already-correct `团队动力学` becomes `团队动力学学`.
+
+**Post-dictionaries are re-applied at rebuild time**, so fixing a term does not require
+re-translating anything.
+
+---
+
+## Limitations
+
+- **Figure internals stay in the source language.** Charts, map labels and warning boxes are
+  part of the raster image; this pipeline translates body text and captions, it does not redraw figures.
+  Re-typesetting text inside images is a separate (and much larger) problem.
+- **Reflow changes pagination.** A 357-page source becomes ~401 A4 pages; original page numbers
+  survive only as inline numbers where the parser kept them.
+- **OCR/VLM noise is filtered heuristically** (vowel-ratio test for logo garbage, single-token
+  paragraph filter). A few odd tokens may survive; they are cheap to fix via `dict_post.json`.
+- **Tables become fenced blocks.** MinerU wraps some tabular regions in code fences; the translator
+  translates their inner text and preserves the fence, which renders acceptably but is not a real table.
+
+---
+
+## More documentation
+
+- [`docs/pipeline.md`](docs/pipeline.md) — why layout-aware parsing, tool comparison, tier trade-offs
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — the environment traps we hit (DLLs, oneDNN,
+  proxy DNS, encoding, gitignore)
+- [`README.zh-CN.md`](README.zh-CN.md) — 中文说明
+
+---
+
+## Legal
+
+The pipeline is tooling; the **books are not included**. Translated editions of a copyrighted work
+are derivative works — check the source licence and your local rules before publishing outputs.
+Keep source PDFs out of the repository (`workspace/source/` is git-ignored).
